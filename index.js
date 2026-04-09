@@ -5,13 +5,7 @@ const QRCode = require('qrcode');
 const cron = require('node-cron');
 const XLSX = require('xlsx');
 const express = require('express');
-const { execSync } = require('child_process');
 
-// Termina Chromium residuo e rimuove i lock file ovunque si trovino
-try { execSync('pkill -9 chromium 2>/dev/null || true'); } catch {}
-try { execSync('sleep 1'); } catch {}
-try { execSync('find / -maxdepth 10 -name "SingletonLock" -delete 2>/dev/null || true'); } catch {}
-try { execSync('find / -maxdepth 10 -name "SingletonSocket" -delete 2>/dev/null || true'); } catch {}
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const CONFIG = {
@@ -28,7 +22,7 @@ let botReady = false;
 
 // ─── WHATSAPP CLIENT ─────────────────────────────────────────────────────────
 const client = new Client({
-  authStrategy: new LocalAuth({ dataPath: './data' }),
+  authStrategy: new LocalAuth(),
   puppeteer: {
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
