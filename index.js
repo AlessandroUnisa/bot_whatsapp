@@ -466,6 +466,18 @@ app.get('/api/status', (req, res) => {
   res.json({ connected: botReady, qr: !!currentQR });
 });
 
+app.post('/api/test-send', async (req, res) => {
+  if (!botReady || !sock) return res.status(503).json({ error: 'Bot non connesso' });
+  try {
+    const gruppoJid = await trovaChatGruppo();
+    if (!gruppoJid) return res.status(404).json({ error: `Gruppo "${CONFIG.GROUP_NAME}" non trovato` });
+    await sock.sendMessage(gruppoJid, { text: '✅ Test SPIKE Bot — connessione al gruppo funzionante!' });
+    res.json({ ok: true, messaggio: 'Messaggio di test inviato nel gruppo' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/qr', async (req, res) => {
   if (!currentQR) return res.status(404).json({ error: 'QR non disponibile' });
   try {
