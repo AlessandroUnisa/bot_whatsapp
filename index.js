@@ -7,6 +7,21 @@ const XLSX = require('xlsx');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
+
+// Killa Chromium quando Node.js esce (per qualsiasi motivo)
+// così il prossimo avvio non trova lock orfani
+process.on('exit', () => {
+  try { execSync('pkill -9 chromium 2>/dev/null || true'); } catch {}
+});
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err.message);
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled rejection:', reason);
+  process.exit(1);
+});
 
 // ─── INIZIALIZZA FILE EXCEL SUL VOLUME ────────────────────────────────────────
 // Se il volume è vuoto, copia i file Excel dal bundle del container
@@ -43,7 +58,7 @@ const client = new Client({
   authStrategy: new NoAuth(),
   puppeteer: {
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-    userDataDir: `/tmp/wwebjs-${process.pid}`,
+    userDataDir: `/tmp/wwebjs-${Date.now()}`,
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
   },
 });
