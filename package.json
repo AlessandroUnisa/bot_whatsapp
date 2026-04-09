@@ -1,6 +1,6 @@
 {
   "name": "spike-whatsapp-bot",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "Bot WhatsApp per auguri e ricorrenze - SPIKE RM",
   "main": "index.js",
   "scripts": {
@@ -8,12 +8,10 @@
     "dev": "node --watch index.js"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "6.5.0",
-    "express": "^4.19.2",
-    "node-cron": "^3.0.3",
-    "pino": "^9.6.0",
+    "whatsapp-web.js": "^1.26.0",
     "qrcode": "^1.5.4",
-    "socks-proxy-agent": "^8.0.2",
-    "xlsx": "^0.18.5"
+    "node-cron": "^3.0.3",
+    "xlsx": "^0.18.5",
+    "express": "^4.19.2"
   }
 }

@@ -1,13 +1,30 @@
 'use strict';
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, makeCacheableSignalKeyStore, Browsers, generateWAMessageFromContent, proto } = require('@whiskeysockets/baileys');
+const { Client, LocalAuth } = require('whatsapp-web.js');
 const QRCode = require('qrcode');
 const cron = require('node-cron');
 const XLSX = require('xlsx');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const pino = require('pino');
-const { SocksProxyAgent } = require('socks-proxy-agent');
+
+// ─── PULIZIA SINGLETON LOCK (fix Railway restart) ────────────────────────────
+function pulisciLockFiles() {
+  const authBase = path.resolve('./data/auth');
+  if (!fs.existsSync(authBase)) return;
+  const walkAndClean = (dir) => {
+    if (!fs.existsSync(dir)) return;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walkAndClean(full);
+      else if (entry.name === 'SingletonLock' || entry.name === 'SingletonCookie' || entry.name === 'SingletonSocket') {
+        fs.unlinkSync(full);
+        console.log(`🧹 Rimosso ${entry.name}`);
+      }
+    }
+  };
+  walkAndClean(authBase);
+}
+pulisciLockFiles();
 
 // ─── RESET AUTH SE RICHIESTO ─────────────────────────────────────────────────
 if (process.env.RESET_AUTH === 'true') {
@@ -53,91 +70,91 @@ const DEFAULT_TEMPLATE =
 // ─── STATE ────────────────────────────────────────────────────────────────────
 let currentQR = null;
 let botReady = false;
-let historySynced = false;
-let sock = null;
+let client = null;
 let schedulerStarted = false;
 
-// ─── WHATSAPP CONNECTION (Baileys) ────────────────────────────────────────────
-async function connectWhatsApp() {
-  if (!fs.existsSync(CONFIG.AUTH_DIR)) fs.mkdirSync(CONFIG.AUTH_DIR, { recursive: true });
-  const { state, saveCreds } = await useMultiFileAuthState(CONFIG.AUTH_DIR);
-
-  const logger = pino({ level: 'silent' });
-  const socketOpts = {
-    auth: {
-      creds: state.creds,
-      keys: makeCacheableSignalKeyStore(state.keys, logger),
+// ─── WHATSAPP CONNECTION (whatsapp-web.js) ───────────────────────────────────
+function connectWhatsApp() {
+  client = new Client({
+    authStrategy: new LocalAuth({ dataPath: CONFIG.AUTH_DIR }),
+    puppeteer: {
+      headless: true,
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-software-rasterizer',
+        '--single-process',
+        '--no-zygote',
+      ],
     },
-    printQRInTerminal: true,
-    logger,
-    browser: Browsers.ubuntu('Chrome'),
-    syncFullHistory: false,
-    markOnlineOnConnect: false,
-    getMessage: async () => ({ conversation: '' }),
-  };
-
-  // Proxy SOCKS5 per bypassare blocco IP datacenter
-  if (process.env.WA_PROXY) {
-    socketOpts.agent = new SocksProxyAgent(process.env.WA_PROXY);
-    console.log('🌐 Proxy attivo:', process.env.WA_PROXY.replace(/\/\/.*@/, '//***@'));
-  }
-
-  sock = makeWASocket(socketOpts);
-
-  sock.ev.on('creds.update', () => {
-    saveCreds();
-    console.log('💾 Credenziali salvate su disco');
   });
 
-  // Sincronizzazione storia completata — ora è sicuro inviare
-  sock.ev.on('messaging-history.set', () => {
-    historySynced = true;
-    console.log('📬 Sincronizzazione completata — bot pronto ad inviare');
+  client.on('qr', (qr) => {
+    currentQR = qr;
+    botReady = false;
+    console.log(`📱 QR disponibile su: http://localhost:${CONFIG.PORT}`);
   });
 
-  // Log ACK server per ogni messaggio inviato
-  sock.ev.on('messages.update', (updates) => {
-    for (const u of updates) {
-      console.log(`📨 ACK messaggio ${u.key.id}: status=${u.update?.status}`);
+  client.on('ready', () => {
+    currentQR = null;
+    botReady = true;
+    console.log('✅ Bot connesso a WhatsApp!');
+    if (!schedulerStarted) {
+      avviaScheduler();
+      schedulerStarted = true;
     }
   });
 
-  sock.ev.on('connection.update', (update) => {
-    const { connection, lastDisconnect, qr } = update;
+  client.on('authenticated', () => {
+    console.log('💾 Sessione autenticata e salvata');
+  });
 
-    if (qr) {
-      currentQR = qr;
-      botReady = false;
-      console.log(`📱 QR disponibile su: http://localhost:${CONFIG.PORT}`);
-    }
+  client.on('auth_failure', (msg) => {
+    console.error('❌ Autenticazione fallita:', msg);
+    botReady = false;
+  });
 
-    if (connection === 'open') {
-      currentQR = null;
-      botReady = true;
-      // Log file auth salvati per verifica persistenza
-      const authFiles = fs.existsSync(CONFIG.AUTH_DIR) ? fs.readdirSync(CONFIG.AUTH_DIR) : [];
-      console.log(`✅ Bot connesso a WhatsApp! (${authFiles.length} file auth salvati)`);
-      if (!schedulerStarted) {
-        avviaScheduler();
-        schedulerStarted = true;
-      }
-    }
+  client.on('disconnected', (reason) => {
+    console.log('⚠️ Disconnesso:', reason);
+    botReady = false;
+    // Riavvia dopo disconnessione
+    setTimeout(() => {
+      pulisciLockFiles();
+      connectWhatsApp();
+    }, 5000);
+  });
 
-    if (connection === 'close') {
-      botReady = false;
-      const statusCode = lastDisconnect?.error?.output?.statusCode;
-      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-      console.log(`⚠️ Disconnesso (code: ${statusCode}). Riconnessione: ${shouldReconnect}`);
-      if (shouldReconnect) {
-        setTimeout(connectWhatsApp, 5000);
-      } else {
-        console.log('❌ Sessione scaduta — serve nuovo QR');
-        try { fs.rmSync(CONFIG.AUTH_DIR, { recursive: true, force: true }); } catch {}
-        setTimeout(connectWhatsApp, 3000);
-      }
+  client.on('message_ack', (msg, ack) => {
+    // ack: 0=pending, 1=server, 2=device, 3=read, 4=played
+    if (ack >= 1) {
+      console.log(`📨 ACK messaggio: status=${ack}`);
     }
+  });
+
+  console.log('🔄 Avvio Chromium e connessione WhatsApp...');
+  client.initialize().catch((err) => {
+    console.error('❌ Errore inizializzazione:', err.message);
+    // Riprova dopo errore (es. SingletonLock residuo)
+    setTimeout(() => {
+      pulisciLockFiles();
+      connectWhatsApp();
+    }, 10000);
   });
 }
+
+// ─── PULIZIA CHROMIUM ALL'USCITA ─────────────────────────────────────────────
+function cleanup() {
+  console.log('🛑 Pulizia in corso...');
+  if (client) {
+    try { client.destroy(); } catch {}
+  }
+  process.exit(0);
+}
+process.on('SIGINT', cleanup);
+process.on('SIGTERM', cleanup);
 
 // ─── EXCEL ────────────────────────────────────────────────────────────────────
 function leggiCompleanni(tutti = false) {
@@ -219,12 +236,11 @@ function formatMsg(template, vars = {}) {
 
 async function trovaChatGruppo() {
   try {
-    const groups = await sock.groupFetchAllParticipating();
-    for (const [jid, group] of Object.entries(groups)) {
-      if (group.subject === CONFIG.GROUP_NAME) return jid;
-    }
+    const chats = await client.getChats();
+    const group = chats.find(c => c.isGroup && c.name === CONFIG.GROUP_NAME);
+    if (group) return group;
     console.error(`❌ Gruppo "${CONFIG.GROUP_NAME}" non trovato.`);
-    console.log('Gruppi disponibili:', Object.values(groups).map(g => g.subject));
+    console.log('Gruppi disponibili:', chats.filter(c => c.isGroup).map(c => c.name));
   } catch (e) {
     console.error('❌ Errore fetch gruppi:', e.message);
   }
@@ -233,29 +249,13 @@ async function trovaChatGruppo() {
 
 async function controllaEInvia() {
   console.log(`\n[${new Date().toLocaleString('it-IT')}] 🔍 Controllo in corso...`);
-  if (!botReady || !sock) {
+  if (!botReady || !client) {
     console.log('⚠️ Bot non connesso, salto controllo');
     return;
   }
-  if (!historySynced) {
-    console.log('⏳ In attesa sincronizzazione WhatsApp...');
-    await new Promise(resolve => {
-      const check = setInterval(() => { if (historySynced) { clearInterval(check); resolve(); } }, 1000);
-      setTimeout(() => { clearInterval(check); resolve(); }, 30000); // max 30s
-    });
-  }
 
-  const gruppoJid = await trovaChatGruppo();
-  if (!gruppoJid) return;
-
-  // Forza distribuzione sender keys ai partecipanti del gruppo
-  try {
-    await sock.groupMetadata(gruppoJid);
-    await sleep(2000);
-  } catch (e) {
-    console.error('⚠️ groupMetadata error:', e.message);
-  }
-
+  const gruppo = await trovaChatGruppo();
+  if (!gruppo) return;
   let inviati = 0;
 
   for (const p of leggiCompleanni()) {
@@ -264,7 +264,7 @@ async function controllaEInvia() {
         p.Template_personalizzato || DEFAULT_TEMPLATE,
         { Nome: p.Nome, Cognome: p.Cognome }
       );
-      await inviaMessaggio(gruppoJid, msg);
+      await gruppo.sendMessage(msg);
       console.log(`🎂 Auguri inviati per ${p.Nome} ${p.Cognome}`);
       inviati++;
       await sleep(2000);
@@ -273,7 +273,7 @@ async function controllaEInvia() {
 
   for (const r of leggiRicorrenze()) {
     if (isOggi(r.Data)) {
-      await inviaMessaggio(gruppoJid, r.Messaggio);
+      await gruppo.sendMessage(r.Messaggio);
       console.log(`🗓️ Messaggio inviato per: ${r.Ricorrenza}`);
       inviati++;
       await sleep(2000);
@@ -289,30 +289,6 @@ function avviaScheduler() {
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-// Invio robusto: genera messaggio + relay con retry
-async function inviaMessaggio(jid, text) {
-  // Metodo 1: relay diretto con messaggio pre-generato
-  try {
-    const msg = generateWAMessageFromContent(jid, proto.Message.fromObject({
-      extendedTextMessage: { text }
-    }), { userJid: sock.user.id });
-    await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
-    console.log(`📤 Relay OK (id: ${msg.key.id})`);
-    return true;
-  } catch (e) {
-    console.log(`⚠️ Relay fallito: ${e.message}, provo sendMessage...`);
-  }
-  // Metodo 2: fallback a sendMessage classico
-  try {
-    await sock.sendMessage(jid, { text });
-    console.log('📤 sendMessage OK');
-    return true;
-  } catch (e) {
-    console.error('❌ Invio fallito:', e.message);
-    return false;
-  }
-}
 
 // ─── EXPRESS ADMIN ────────────────────────────────────────────────────────────
 const app = express();
@@ -551,23 +527,23 @@ app.get('/api/status', (req, res) => {
   res.json({ connected: botReady, qr: !!currentQR });
 });
 
-app.post('/api/run-check', async (req, res) => {
-  if (!botReady || !sock) return res.status(503).json({ error: 'Bot non connesso' });
+app.post('/api/test-send', async (req, res) => {
+  if (!botReady || !client) return res.status(503).json({ error: 'Bot non connesso' });
   try {
-    await controllaEInvia();
-    res.json({ ok: true, messaggio: 'Controllo eseguito — vedi i log Railway per il risultato' });
+    const gruppo = await trovaChatGruppo();
+    if (!gruppo) return res.status(404).json({ error: `Gruppo "${CONFIG.GROUP_NAME}" non trovato` });
+    await gruppo.sendMessage('✅ Test SPIKE Bot — connessione al gruppo funzionante!');
+    res.json({ ok: true, messaggio: 'Messaggio di test inviato nel gruppo' });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-app.post('/api/test-send', async (req, res) => {
-  if (!botReady || !sock) return res.status(503).json({ error: 'Bot non connesso' });
+app.post('/api/run-check', async (req, res) => {
+  if (!botReady || !client) return res.status(503).json({ error: 'Bot non connesso' });
   try {
-    const gruppoJid = await trovaChatGruppo();
-    if (!gruppoJid) return res.status(404).json({ error: `Gruppo "${CONFIG.GROUP_NAME}" non trovato` });
-    await inviaMessaggio(gruppoJid, '✅ Test SPIKE Bot — connessione al gruppo funzionante!');
-    res.json({ ok: true, messaggio: 'Messaggio di test inviato nel gruppo' });
+    await controllaEInvia();
+    res.json({ ok: true, messaggio: 'Controllo eseguito — vedi i log per il risultato' });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

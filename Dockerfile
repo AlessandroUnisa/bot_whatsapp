@@ -1,16 +1,17 @@
 FROM node:18-slim
 
-RUN apt-get update && apt-get install -y git ca-certificates --no-install-recommends && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y \
+    chromium \
+    ca-certificates \
+    --no-install-recommends && rm -rf /var/lib/apt/lists/*
+
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 WORKDIR /app
 
 COPY package*.json ./
-ENV GIT_CONFIG_COUNT=2
-ENV GIT_CONFIG_KEY_0=url.https://github.com/.insteadOf
-ENV GIT_CONFIG_VALUE_0=ssh://git@github.com/
-ENV GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf
-ENV GIT_CONFIG_VALUE_1=git+ssh://git@github.com/
-RUN npm install --omit=dev --omit=optional --no-package-lock
+RUN npm install --omit=dev --no-package-lock
 
 COPY . .
 
