@@ -34,6 +34,11 @@ RUN npm install --omit=dev
 
 COPY . .
 
+# Salva copia dei file Excel come backup nel container
+RUN mkdir -p /app/data_init && \
+    cp /app/data/compleanni.xlsx /app/data_init/ && \
+    cp /app/data/ricorrenze.xlsx /app/data_init/
+
 RUN mkdir -p /app/data
 
 EXPOSE 3000

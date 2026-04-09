@@ -5,6 +5,24 @@ const QRCode = require('qrcode');
 const cron = require('node-cron');
 const XLSX = require('xlsx');
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
+
+// ─── INIZIALIZZA FILE EXCEL SUL VOLUME ────────────────────────────────────────
+// Se il volume è vuoto, copia i file Excel dal bundle del container
+function inizializzaData() {
+  const dir = path.resolve('./data');
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  for (const file of ['compleanni.xlsx', 'ricorrenze.xlsx']) {
+    const dest = path.join(dir, file);
+    const src = path.join('/app/data_init', file);
+    if (!fs.existsSync(dest) && fs.existsSync(src)) {
+      fs.copyFileSync(src, dest);
+      console.log(`📋 Copiato ${file} nel volume`);
+    }
+  }
+}
+inizializzaData();
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const CONFIG = {
