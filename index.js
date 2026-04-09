@@ -61,11 +61,14 @@ const CONFIG = {
 };
 
 const DEFAULT_TEMPLATE =
-  '🎂 *Tanti auguri {Nome} {Cognome}!* 🎉\n\n' +
-  '🆕 SPIKE RM 🏛️\nBuongiorno a tutti!\n' +
-  'Oggi è il compleanno di *{Nome} {Cognome}*! 🥳\n\n' +
-  'Uniamoci tutti per fargli/farle gli auguri più sinceri! 🎈\n\n' +
-  '*Tanti auguri da tutto il team SPIKE Roma!* 🍾';
+  '🆕 SPIKE RM 🏛️\n' +
+  'Buongiorno a tutti,\n' +
+  'tantissimi auguri di buon compleanno, {Nome} {Cognome}! 🎉\n' +
+  'Ti auguriamo una giornata piena di sorrisi, brindisi, dolci e possibilmente zero pensieri 😄\n' +
+  'Che questo nuovo anno ti regali tante belle sorprese, nuove avventure e tanti momenti spensierati da condividere con le persone che ami.\n' +
+  'Grazie per l\'energia, la simpatia e la pazienza che metti ogni giorno in tutto quello che fai!\n' +
+  'Goditi il tuo giorno alla grande… e ricordati che, come da regolamento non scritto, chi compie gli anni porta le pastarelle 😜🎂\n\n' +
+  'Un grande augurio da parte di tutti noi! 🥳🎈';
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
 let currentQR = null;
