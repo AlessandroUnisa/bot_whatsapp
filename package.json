@@ -8,12 +8,12 @@
     "dev": "node --watch index.js"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "6.5.0",
-    "qrcode": "^1.5.4",
-    "node-cron": "^3.0.3",
-    "xlsx": "^0.18.5",
+    "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "express": "^4.19.2",
+    "node-cron": "^3.0.3",
     "pino": "^9.6.0",
-    "socks-proxy-agent": "^8.0.2"
+    "qrcode": "^1.5.4",
+    "socks-proxy-agent": "^8.0.2",
+    "xlsx": "^0.18.5"
   }
 }
