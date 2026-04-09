@@ -97,6 +97,8 @@ async function connectWhatsApp() {
           try {
             const jid = await trovaChatGruppo();
             if (jid) {
+              await sock.groupMetadata(jid);
+              await sleep(2000);
               await sock.sendMessage(jid, { text: '🤖 *SPIKE Bot attivo!*\nSono online e pronto. Vi auguro buongiorno! ☀️' });
               console.log('👋 Messaggio di benvenuto inviato nel gruppo');
             }
@@ -224,6 +226,15 @@ async function controllaEInvia() {
 
   const gruppoJid = await trovaChatGruppo();
   if (!gruppoJid) return;
+
+  // Forza distribuzione sender keys ai partecipanti del gruppo
+  try {
+    await sock.groupMetadata(gruppoJid);
+    await sleep(2000);
+  } catch (e) {
+    console.error('⚠️ groupMetadata error:', e.message);
+  }
+
   let inviati = 0;
 
   for (const p of leggiCompleanni()) {
