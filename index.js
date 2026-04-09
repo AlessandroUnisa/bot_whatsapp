@@ -478,6 +478,16 @@ app.get('/api/status', (req, res) => {
   res.json({ connected: botReady, qr: !!currentQR });
 });
 
+app.post('/api/run-check', async (req, res) => {
+  if (!botReady || !sock) return res.status(503).json({ error: 'Bot non connesso' });
+  try {
+    await controllaEInvia();
+    res.json({ ok: true, messaggio: 'Controllo eseguito — vedi i log Railway per il risultato' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/test-send', async (req, res) => {
   if (!botReady || !sock) return res.status(503).json({ error: 'Bot non connesso' });
   try {
