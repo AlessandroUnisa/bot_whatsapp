@@ -5,9 +5,7 @@ RUN apt-get update && apt-get install -y git --no-install-recommends && rm -rf /
 WORKDIR /app
 
 COPY package*.json ./
-RUN git config --global url."https://github.com/".insteadOf "ssh://git@github.com/" && \
-    git config --global url."https://github.com/".insteadOf "git+ssh://git@github.com/" && \
-    npm install --omit=dev
+RUN npm install --omit=dev --no-package-lock
 
 COPY . .
 
