@@ -5,6 +5,10 @@ const QRCode = require('qrcode');
 const cron = require('node-cron');
 const XLSX = require('xlsx');
 const express = require('express');
+const { execSync } = require('child_process');
+
+// Rimuove il lock file di Chromium lasciato da sessioni precedenti
+try { execSync('rm -rf /tmp/puppeteer-data'); } catch {}
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const CONFIG = {
