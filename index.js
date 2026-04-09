@@ -24,6 +24,7 @@ const client = new Client({
   authStrategy: new LocalAuth({ dataPath: './data' }),
   puppeteer: {
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+    userDataDir: '/tmp/puppeteer-data',
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
   },
 });
