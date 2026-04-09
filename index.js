@@ -75,6 +75,18 @@ async function connectWhatsApp() {
       if (!schedulerStarted) {
         avviaScheduler();
         schedulerStarted = true;
+        // Messaggio di benvenuto al primo avvio
+        setTimeout(async () => {
+          try {
+            const jid = await trovaChatGruppo();
+            if (jid) {
+              await sock.sendMessage(jid, { text: '🤖 *SPIKE Bot attivo!*\nSono online e pronto. Vi auguro buongiorno! ☀️' });
+              console.log('👋 Messaggio di benvenuto inviato nel gruppo');
+            }
+          } catch (e) {
+            console.error('⚠️ Impossibile inviare benvenuto:', e.message);
+          }
+        }, 5000);
       }
     }
 
