@@ -7,9 +7,10 @@ const XLSX = require('xlsx');
 const express = require('express');
 const { execSync } = require('child_process');
 
-// Termina eventuali processi Chromium rimasti e pulisce le directory temporanee
-try { execSync('pkill -f chromium'); } catch {}
-try { execSync('rm -rf /tmp/puppeteer-*'); } catch {}
+// Rimuove SingletonLock di Chromium rimasto da container precedenti
+try { execSync('find /app/data -name "SingletonLock" -delete'); } catch {}
+try { execSync('find /app/data -name "SingletonSocket" -delete'); } catch {}
+try { execSync('pkill -9 -f chromium || true'); } catch {}
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const CONFIG = {
@@ -29,7 +30,6 @@ const client = new Client({
   authStrategy: new LocalAuth({ dataPath: './data' }),
   puppeteer: {
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-    userDataDir: `/tmp/puppeteer-${process.pid}`,
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
   },
 });
