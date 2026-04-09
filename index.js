@@ -8,6 +8,15 @@ const fs = require('fs');
 const path = require('path');
 const pino = require('pino');
 
+// ─── RESET AUTH SE RICHIESTO ─────────────────────────────────────────────────
+if (process.env.RESET_AUTH === 'true') {
+  const authDir = path.resolve('./data/auth');
+  if (fs.existsSync(authDir)) {
+    fs.rmSync(authDir, { recursive: true, force: true });
+    console.log('🔄 Cartella auth eliminata — verrà mostrato un nuovo QR');
+  }
+}
+
 // ─── INIZIALIZZA FILE EXCEL SUL VOLUME ────────────────────────────────────────
 function inizializzaData() {
   const dir = path.resolve('./data');
