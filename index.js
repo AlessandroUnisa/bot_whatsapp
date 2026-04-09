@@ -7,8 +7,9 @@ const XLSX = require('xlsx');
 const express = require('express');
 const { execSync } = require('child_process');
 
-// Rimuove il lock file di Chromium lasciato da sessioni precedenti
-try { execSync('rm -rf /tmp/puppeteer-data'); } catch {}
+// Termina eventuali processi Chromium rimasti e pulisce le directory temporanee
+try { execSync('pkill -f chromium'); } catch {}
+try { execSync('rm -rf /tmp/puppeteer-*'); } catch {}
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const CONFIG = {
@@ -28,7 +29,7 @@ const client = new Client({
   authStrategy: new LocalAuth({ dataPath: './data' }),
   puppeteer: {
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-    userDataDir: '/tmp/puppeteer-data',
+    userDataDir: `/tmp/puppeteer-${process.pid}`,
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
   },
 });
