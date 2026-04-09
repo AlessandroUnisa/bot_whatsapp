@@ -5,7 +5,14 @@ const QRCode = require('qrcode');
 const cron = require('node-cron');
 const XLSX = require('xlsx');
 const express = require('express');
+const { spawnSync } = require('child_process');
 
+// Killa eventuali processi Chromium orfani rimasti da crash precedenti
+spawnSync('pkill', ['-9', '-f', 'chromium'], { stdio: 'ignore' });
+// Piccola pausa per assicurarsi che siano morti
+spawnSync('sleep', ['1'], { stdio: 'ignore' });
+// Rimuove qualsiasi SingletonLock rimasto
+spawnSync('find', ['/', '-maxdepth', '15', '-name', 'SingletonLock', '-delete'], { stdio: 'ignore' });
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const CONFIG = {
