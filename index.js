@@ -7,6 +7,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const pino = require('pino');
+const { SocksProxyAgent } = require('socks-proxy-agent');
 
 // ─── RESET AUTH SE RICHIESTO ─────────────────────────────────────────────────
 if (process.env.RESET_AUTH === 'true') {
@@ -62,7 +63,7 @@ async function connectWhatsApp() {
   const { state, saveCreds } = await useMultiFileAuthState(CONFIG.AUTH_DIR);
 
   const logger = pino({ level: 'silent' });
-  sock = makeWASocket({
+  const socketOpts = {
     auth: {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger),
@@ -73,7 +74,15 @@ async function connectWhatsApp() {
     syncFullHistory: false,
     markOnlineOnConnect: false,
     getMessage: async () => ({ conversation: '' }),
-  });
+  };
+
+  // Proxy SOCKS5 per bypassare blocco IP datacenter
+  if (process.env.WA_PROXY) {
+    socketOpts.agent = new SocksProxyAgent(process.env.WA_PROXY);
+    console.log('🌐 Proxy attivo:', process.env.WA_PROXY.replace(/\/\/.*@/, '//***@'));
+  }
+
+  sock = makeWASocket(socketOpts);
 
   sock.ev.on('creds.update', saveCreds);
 
