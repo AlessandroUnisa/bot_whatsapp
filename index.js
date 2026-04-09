@@ -7,10 +7,11 @@ const XLSX = require('xlsx');
 const express = require('express');
 const { execSync } = require('child_process');
 
-// Rimuove SingletonLock di Chromium rimasto da container precedenti
-try { execSync('find /app/data -name "SingletonLock" -delete'); } catch {}
-try { execSync('find /app/data -name "SingletonSocket" -delete'); } catch {}
-try { execSync('pkill -9 -f chromium || true'); } catch {}
+// Termina Chromium residuo e rimuove i lock file ovunque si trovino
+try { execSync('pkill -9 chromium 2>/dev/null || true'); } catch {}
+try { execSync('sleep 1'); } catch {}
+try { execSync('find / -maxdepth 10 -name "SingletonLock" -delete 2>/dev/null || true'); } catch {}
+try { execSync('find / -maxdepth 10 -name "SingletonSocket" -delete 2>/dev/null || true'); } catch {}
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const CONFIG = {
