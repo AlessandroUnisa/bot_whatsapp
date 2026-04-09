@@ -84,7 +84,7 @@ async function connectWhatsApp() {
       if (!schedulerStarted) {
         avviaScheduler();
         schedulerStarted = true;
-        // Messaggio di benvenuto al primo avvio
+        // Messaggio di benvenuto al primo avvio — attende 30s per sessione stabile
         setTimeout(async () => {
           try {
             const jid = await trovaChatGruppo();
@@ -95,7 +95,7 @@ async function connectWhatsApp() {
           } catch (e) {
             console.error('⚠️ Impossibile inviare benvenuto:', e.message);
           }
-        }, 5000);
+        }, 30000);
       }
     }
 
