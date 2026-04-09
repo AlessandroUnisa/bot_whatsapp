@@ -10,7 +10,7 @@ ENV GIT_CONFIG_KEY_0=url.https://github.com/.insteadOf
 ENV GIT_CONFIG_VALUE_0=ssh://git@github.com/
 ENV GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf
 ENV GIT_CONFIG_VALUE_1=git+ssh://git@github.com/
-RUN npm install --omit=dev --no-package-lock
+RUN npm install --omit=dev --omit=optional --no-package-lock
 
 COPY . .
 
