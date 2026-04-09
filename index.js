@@ -1,5 +1,5 @@
 'use strict';
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, makeCacheableSignalKeyStore, Browsers } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
 const cron = require('node-cron');
 const XLSX = require('xlsx');
@@ -60,10 +60,18 @@ async function connectWhatsApp() {
   if (!fs.existsSync(CONFIG.AUTH_DIR)) fs.mkdirSync(CONFIG.AUTH_DIR, { recursive: true });
   const { state, saveCreds } = await useMultiFileAuthState(CONFIG.AUTH_DIR);
 
+  const logger = pino({ level: 'silent' });
   sock = makeWASocket({
-    auth: state,
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, logger),
+    },
     printQRInTerminal: true,
-    logger: pino({ level: 'silent' }),
+    logger,
+    browser: Browsers.ubuntu('Chrome'),
+    syncFullHistory: false,
+    markOnlineOnConnect: false,
+    getMessage: async () => ({ conversation: '' }),
   });
 
   sock.ev.on('creds.update', saveCreds);
