@@ -1,5 +1,5 @@
 'use strict';
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, makeCacheableSignalKeyStore, Browsers } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, makeCacheableSignalKeyStore, Browsers, generateWAMessageFromContent, proto } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
 const cron = require('node-cron');
 const XLSX = require('xlsx');
@@ -68,6 +68,7 @@ async function connectWhatsApp() {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger),
     },
+    printQRInTerminal: true,
     logger,
     browser: Browsers.ubuntu('Chrome'),
     syncFullHistory: false,
@@ -121,7 +122,7 @@ async function connectWhatsApp() {
             if (jid) {
               await sock.groupMetadata(jid);
               await sleep(2000);
-              await sock.sendMessage(jid, { text: '🤖 *SPIKE Bot attivo!*\nSono online e pronto. Vi auguro buongiorno! ☀️' });
+              await inviaMessaggio(jid, '🤖 *SPIKE Bot attivo!*\nSono online e pronto. Vi auguro buongiorno! ☀️');
               console.log('👋 Messaggio di benvenuto inviato nel gruppo');
             }
           } catch (e) {
@@ -272,7 +273,7 @@ async function controllaEInvia() {
         p.Template_personalizzato || DEFAULT_TEMPLATE,
         { Nome: p.Nome, Cognome: p.Cognome }
       );
-      await sock.sendMessage(gruppoJid, { text: msg });
+      await inviaMessaggio(gruppoJid, msg);
       console.log(`🎂 Auguri inviati per ${p.Nome} ${p.Cognome}`);
       inviati++;
       await sleep(2000);
@@ -281,7 +282,7 @@ async function controllaEInvia() {
 
   for (const r of leggiRicorrenze()) {
     if (isOggi(r.Data)) {
-      await sock.sendMessage(gruppoJid, { text: r.Messaggio });
+      await inviaMessaggio(gruppoJid, r.Messaggio);
       console.log(`🗓️ Messaggio inviato per: ${r.Ricorrenza}`);
       inviati++;
       await sleep(2000);
@@ -297,6 +298,30 @@ function avviaScheduler() {
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// Invio robusto: genera messaggio + relay con retry
+async function inviaMessaggio(jid, text) {
+  // Metodo 1: relay diretto con messaggio pre-generato
+  try {
+    const msg = generateWAMessageFromContent(jid, proto.Message.fromObject({
+      extendedTextMessage: { text }
+    }), { userJid: sock.user.id });
+    await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
+    console.log(`📤 Relay OK (id: ${msg.key.id})`);
+    return true;
+  } catch (e) {
+    console.log(`⚠️ Relay fallito: ${e.message}, provo sendMessage...`);
+  }
+  // Metodo 2: fallback a sendMessage classico
+  try {
+    await sock.sendMessage(jid, { text });
+    console.log('📤 sendMessage OK');
+    return true;
+  } catch (e) {
+    console.error('❌ Invio fallito:', e.message);
+    return false;
+  }
+}
 
 // ─── EXPRESS ADMIN ────────────────────────────────────────────────────────────
 const app = express();
@@ -550,7 +575,7 @@ app.post('/api/test-send', async (req, res) => {
   try {
     const gruppoJid = await trovaChatGruppo();
     if (!gruppoJid) return res.status(404).json({ error: `Gruppo "${CONFIG.GROUP_NAME}" non trovato` });
-    await sock.sendMessage(gruppoJid, { text: '✅ Test SPIKE Bot — connessione al gruppo funzionante!' });
+    await inviaMessaggio(gruppoJid, '✅ Test SPIKE Bot — connessione al gruppo funzionante!');
     res.json({ ok: true, messaggio: 'Messaggio di test inviato nel gruppo' });
   } catch (e) {
     res.status(500).json({ error: e.message });
