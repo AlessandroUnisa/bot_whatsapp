@@ -84,7 +84,10 @@ async function connectWhatsApp() {
 
   sock = makeWASocket(socketOpts);
 
-  sock.ev.on('creds.update', saveCreds);
+  sock.ev.on('creds.update', () => {
+    saveCreds();
+    console.log('💾 Credenziali salvate su disco');
+  });
 
   // Sincronizzazione storia completata — ora è sicuro inviare
   sock.ev.on('messaging-history.set', () => {
@@ -111,24 +114,12 @@ async function connectWhatsApp() {
     if (connection === 'open') {
       currentQR = null;
       botReady = true;
-      console.log('✅ Bot connesso a WhatsApp!');
+      // Log file auth salvati per verifica persistenza
+      const authFiles = fs.existsSync(CONFIG.AUTH_DIR) ? fs.readdirSync(CONFIG.AUTH_DIR) : [];
+      console.log(`✅ Bot connesso a WhatsApp! (${authFiles.length} file auth salvati)`);
       if (!schedulerStarted) {
         avviaScheduler();
         schedulerStarted = true;
-        // Messaggio di benvenuto al primo avvio — attende 30s per sessione stabile
-        setTimeout(async () => {
-          try {
-            const jid = await trovaChatGruppo();
-            if (jid) {
-              await sock.groupMetadata(jid);
-              await sleep(2000);
-              await inviaMessaggio(jid, '🤖 *SPIKE Bot attivo!*\nSono online e pronto. Vi auguro buongiorno! ☀️');
-              console.log('👋 Messaggio di benvenuto inviato nel gruppo');
-            }
-          } catch (e) {
-            console.error('⚠️ Impossibile inviare benvenuto:', e.message);
-          }
-        }, 30000);
       }
     }
 
