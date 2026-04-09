@@ -61,7 +61,7 @@ const CONFIG = {
 };
 
 const DEFAULT_TEMPLATE =
-  '🆕 SPIKE RM 🏛️\n' +
+  '🆕 SPIKE RM 🏛️\n\n' +
   'Buongiorno a tutti,\n' +
   'tantissimi auguri di buon compleanno, {Nome} {Cognome}! 🎉\n' +
   'Ti auguriamo una giornata piena di sorrisi, brindisi, dolci e possibilmente zero pensieri 😄\n' +
