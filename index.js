@@ -1,30 +1,14 @@
 'use strict';
-const { Client, NoAuth } = require('whatsapp-web.js');
-const qrcodeTerminal = require('qrcode-terminal');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
 const cron = require('node-cron');
 const XLSX = require('xlsx');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
-
-// Killa Chromium quando Node.js esce (per qualsiasi motivo)
-// così il prossimo avvio non trova lock orfani
-process.on('exit', () => {
-  try { execSync('pkill -9 chromium 2>/dev/null || true'); } catch {}
-});
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught exception:', err.message);
-  process.exit(1);
-});
-process.on('unhandledRejection', (reason) => {
-  console.error('Unhandled rejection:', reason);
-  process.exit(1);
-});
+const pino = require('pino');
 
 // ─── INIZIALIZZA FILE EXCEL SUL VOLUME ────────────────────────────────────────
-// Se il volume è vuoto, copia i file Excel dal bundle del container
 function inizializzaData() {
   const dir = path.resolve('./data');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -43,45 +27,72 @@ inizializzaData();
 const CONFIG = {
   COMPLEANNI_FILE: './data/compleanni.xlsx',
   RICORRENZE_FILE: './data/ricorrenze.xlsx',
+  AUTH_DIR: './data/auth',
   GROUP_NAME: process.env.GROUP_NAME || 'SPIKE RM 🏛️',
   SEND_TIME: process.env.SEND_TIME || '0 9 * * *',
   PORT: parseInt(process.env.PORT) || 3000,
 };
 
+const DEFAULT_TEMPLATE =
+  '🎂 *Tanti auguri {Nome} {Cognome}!* 🎉\n\n' +
+  '🆕 SPIKE RM 🏛️\nBuongiorno a tutti!\n' +
+  'Oggi è il compleanno di *{Nome} {Cognome}*! 🥳\n\n' +
+  'Uniamoci tutti per fargli/farle gli auguri più sinceri! 🎈\n\n' +
+  '*Tanti auguri da tutto il team SPIKE Roma!* 🍾';
+
 // ─── STATE ────────────────────────────────────────────────────────────────────
 let currentQR = null;
 let botReady = false;
+let sock = null;
+let schedulerStarted = false;
 
-// ─── WHATSAPP CLIENT ─────────────────────────────────────────────────────────
-// Ogni avvio usa una directory fresca per evitare conflitti di lock Chromium
-const client = new Client({
-  authStrategy: new NoAuth(),
-  puppeteer: {
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-    userDataDir: `/tmp/wwebjs-${Date.now()}`,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-  },
-});
+// ─── WHATSAPP CONNECTION (Baileys) ────────────────────────────────────────────
+async function connectWhatsApp() {
+  if (!fs.existsSync(CONFIG.AUTH_DIR)) fs.mkdirSync(CONFIG.AUTH_DIR, { recursive: true });
+  const { state, saveCreds } = await useMultiFileAuthState(CONFIG.AUTH_DIR);
 
-client.on('qr', qr => {
-  currentQR = qr;
-  botReady = false;
-  qrcodeTerminal.generate(qr, { small: true });
-  console.log(`\n📱 QR disponibile su: http://localhost:${CONFIG.PORT}`);
-});
+  sock = makeWASocket({
+    auth: state,
+    printQRInTerminal: true,
+    logger: pino({ level: 'silent' }),
+  });
 
-client.on('ready', () => {
-  currentQR = null;
-  botReady = true;
-  console.log('✅ Bot connesso a WhatsApp!');
-  avviaScheduler();
-});
+  sock.ev.on('creds.update', saveCreds);
 
-client.on('auth_failure', () => console.error('❌ Autenticazione fallita'));
-client.on('disconnected', reason => {
-  botReady = false;
-  console.log('⚠️ Disconnesso:', reason);
-});
+  sock.ev.on('connection.update', (update) => {
+    const { connection, lastDisconnect, qr } = update;
+
+    if (qr) {
+      currentQR = qr;
+      botReady = false;
+      console.log(`📱 QR disponibile su: http://localhost:${CONFIG.PORT}`);
+    }
+
+    if (connection === 'open') {
+      currentQR = null;
+      botReady = true;
+      console.log('✅ Bot connesso a WhatsApp!');
+      if (!schedulerStarted) {
+        avviaScheduler();
+        schedulerStarted = true;
+      }
+    }
+
+    if (connection === 'close') {
+      botReady = false;
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+      console.log(`⚠️ Disconnesso (code: ${statusCode}). Riconnessione: ${shouldReconnect}`);
+      if (shouldReconnect) {
+        setTimeout(connectWhatsApp, 5000);
+      } else {
+        console.log('❌ Sessione scaduta — serve nuovo QR');
+        try { fs.rmSync(CONFIG.AUTH_DIR, { recursive: true, force: true }); } catch {}
+        setTimeout(connectWhatsApp, 3000);
+      }
+    }
+  });
+}
 
 // ─── EXCEL ────────────────────────────────────────────────────────────────────
 function leggiCompleanni(tutti = false) {
@@ -124,7 +135,6 @@ function scriviRicorrenze(rows) {
   XLSX.writeFile(wb, CONFIG.RICORRENZE_FILE);
 }
 
-// Converte numero seriale Excel in stringa GG/MM
 function serialeToData(val) {
   if (typeof val === 'number') {
     const d = XLSX.SSF.parse_date_code(val);
@@ -163,29 +173,37 @@ function formatMsg(template, vars = {}) {
 }
 
 async function trovaChatGruppo() {
-  const chats = await client.getChats();
-  const gruppo = chats.find(c => c.isGroup && c.name === CONFIG.GROUP_NAME);
-  if (!gruppo) {
+  try {
+    const groups = await sock.groupFetchAllParticipating();
+    for (const [jid, group] of Object.entries(groups)) {
+      if (group.subject === CONFIG.GROUP_NAME) return jid;
+    }
     console.error(`❌ Gruppo "${CONFIG.GROUP_NAME}" non trovato.`);
-    console.log('Gruppi disponibili:', chats.filter(c => c.isGroup).map(c => c.name));
+    console.log('Gruppi disponibili:', Object.values(groups).map(g => g.subject));
+  } catch (e) {
+    console.error('❌ Errore fetch gruppi:', e.message);
   }
-  return gruppo || null;
+  return null;
 }
 
 async function controllaEInvia() {
   console.log(`\n[${new Date().toLocaleString('it-IT')}] 🔍 Controllo in corso...`);
-  const gruppo = await trovaChatGruppo();
-  if (!gruppo) return;
+  if (!botReady || !sock) {
+    console.log('⚠️ Bot non connesso, salto controllo');
+    return;
+  }
+
+  const gruppoJid = await trovaChatGruppo();
+  if (!gruppoJid) return;
   let inviati = 0;
 
   for (const p of leggiCompleanni()) {
     if (isOggi(p.Compleanno)) {
       const msg = formatMsg(
-        p.Template_personalizzato ||
-        '🎂 *Tanti auguri {Nome} {Cognome}!* 🎉\n\n🆕 SPIKE RM 🏛️\nBuongiorno a tutti!\nOggi è il compleanno di *{Nome} {Cognome}*! 🥳\n\nUniamoci tutti per fargli/farle gli auguri più sinceri! 🎈\n\n*Tanti auguri da tutto il team SPIKE Roma!* 🍾',
+        p.Template_personalizzato || DEFAULT_TEMPLATE,
         { Nome: p.Nome, Cognome: p.Cognome }
       );
-      await gruppo.sendMessage(msg);
+      await sock.sendMessage(gruppoJid, { text: msg });
       console.log(`🎂 Auguri inviati per ${p.Nome} ${p.Cognome}`);
       inviati++;
       await sleep(2000);
@@ -194,7 +212,7 @@ async function controllaEInvia() {
 
   for (const r of leggiRicorrenze()) {
     if (isOggi(r.Data)) {
-      await gruppo.sendMessage(r.Messaggio);
+      await sock.sendMessage(gruppoJid, { text: r.Messaggio });
       console.log(`🗓️ Messaggio inviato per: ${r.Ricorrenza}`);
       inviati++;
       await sleep(2000);
@@ -206,7 +224,7 @@ async function controllaEInvia() {
 
 function avviaScheduler() {
   cron.schedule(CONFIG.SEND_TIME, controllaEInvia, { timezone: 'Europe/Rome' });
-  console.log('📅 Scheduler attivo — ogni giorno alle 09:00 (Roma)');
+  console.log(`📅 Scheduler attivo — ogni giorno alle 09:00 (Roma)`);
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -259,7 +277,6 @@ const HTML = `<!DOCTYPE html>
   .attivo-no{color:#ff6b6b;font-weight:600}
   .msg-preview{max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#666}
   .actions{display:flex;gap:6px}
-  /* Modal */
   .overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;align-items:center;justify-content:center}
   .overlay.open{display:flex}
   .modal{background:#fff;border-radius:12px;padding:28px;width:min(560px,95vw);max-height:90vh;overflow-y:auto}
@@ -280,7 +297,6 @@ const HTML = `<!DOCTYPE html>
   <span id="statusBadge" class="badge wait">Connessione...</span>
 </header>
 <main>
-  <!-- QR sezione -->
   <div id="qrSection" class="card" style="display:none">
     <h2>Scansiona il QR con WhatsApp</h2>
     <div class="qr-wrap">
@@ -288,15 +304,11 @@ const HTML = `<!DOCTYPE html>
       <p>WhatsApp → Menu → Dispositivi collegati → Collega un dispositivo</p>
     </div>
   </div>
-
-  <!-- Tabs -->
   <div id="adminSection" style="display:none">
     <div class="tabs">
       <button class="tab active" onclick="showTab('compleanni')">🎂 Compleanni</button>
       <button class="tab" onclick="showTab('ricorrenze')">🗓️ Ricorrenze</button>
     </div>
-
-    <!-- COMPLEANNI -->
     <div id="tab-compleanni" class="section active">
       <div class="card">
         <div class="toolbar">
@@ -309,8 +321,6 @@ const HTML = `<!DOCTYPE html>
         </table>
       </div>
     </div>
-
-    <!-- RICORRENZE -->
     <div id="tab-ricorrenze" class="section">
       <div class="card">
         <div class="toolbar">
@@ -325,8 +335,6 @@ const HTML = `<!DOCTYPE html>
     </div>
   </div>
 </main>
-
-<!-- MODAL COMPLEANNI -->
 <div id="modalCompleanni" class="overlay">
   <div class="modal">
     <h3 id="modalCompTitle">Aggiungi persona</h3>
@@ -335,10 +343,7 @@ const HTML = `<!DOCTYPE html>
     <div class="form-row"><label>Cognome *</label><input id="compCognome" type="text" placeholder="es. Rossi"></div>
     <div class="form-row"><label>Compleanno * (GG/MM o GG/MM/AAAA)</label><input id="compCompleanno" type="text" placeholder="es. 25/12 oppure 25/12/1990"></div>
     <div class="form-row"><label>Telefono</label><input id="compTelefono" type="text" placeholder="opzionale"></div>
-    <div class="form-row">
-      <label>Attivo</label>
-      <select id="compAttivo"><option value="SI">SI</option><option value="NO">NO</option></select>
-    </div>
+    <div class="form-row"><label>Attivo</label><select id="compAttivo"><option value="SI">SI</option><option value="NO">NO</option></select></div>
     <div class="form-row"><label>Messaggio personalizzato (usa {Nome} e {Cognome})</label><textarea id="compTemplate" placeholder="Lascia vuoto per messaggio standard"></textarea></div>
     <div class="modal-footer">
       <button class="btn btn-gray" onclick="closeModal('compleanni')">Annulla</button>
@@ -346,18 +351,13 @@ const HTML = `<!DOCTYPE html>
     </div>
   </div>
 </div>
-
-<!-- MODAL RICORRENZE -->
 <div id="modalRicorrenze" class="overlay">
   <div class="modal">
     <h3 id="modalRicTitle">Aggiungi ricorrenza</h3>
     <input type="hidden" id="ricIdx" value="-1">
     <div class="form-row"><label>Ricorrenza *</label><input id="ricNome" type="text" placeholder="es. Natale"></div>
     <div class="form-row"><label>Data * (GG/MM)</label><input id="ricData" type="text" placeholder="es. 25/12"></div>
-    <div class="form-row">
-      <label>Attivo</label>
-      <select id="ricAttivo"><option value="SI">SI</option><option value="NO">NO</option></select>
-    </div>
+    <div class="form-row"><label>Attivo</label><select id="ricAttivo"><option value="SI">SI</option><option value="NO">NO</option></select></div>
     <div class="form-row"><label>Messaggio *</label><textarea id="ricMessaggio" placeholder="Testo del messaggio da inviare"></textarea></div>
     <div class="modal-footer">
       <button class="btn btn-gray" onclick="closeModal('ricorrenze')">Annulla</button>
@@ -365,12 +365,9 @@ const HTML = `<!DOCTYPE html>
     </div>
   </div>
 </div>
-
 <script>
 let compleanni = [];
 let ricorrenze = [];
-
-// ─── STATUS POLLING ──────────────────────────────────────────────────────────
 async function pollStatus() {
   try {
     const r = await fetch('/api/status');
@@ -378,79 +375,35 @@ async function pollStatus() {
     const badge = document.getElementById('statusBadge');
     const qrSec = document.getElementById('qrSection');
     const adminSec = document.getElementById('adminSection');
-
     if (s.connected) {
-      badge.textContent = '✅ Connesso';
-      badge.className = 'badge on';
-      qrSec.style.display = 'none';
-      adminSec.style.display = 'block';
+      badge.textContent = '✅ Connesso'; badge.className = 'badge on';
+      qrSec.style.display = 'none'; adminSec.style.display = 'block';
     } else if (s.qr) {
-      badge.textContent = '⏳ Attesa QR';
-      badge.className = 'badge wait';
-      qrSec.style.display = 'block';
-      adminSec.style.display = 'none';
+      badge.textContent = '⏳ Attesa QR'; badge.className = 'badge wait';
+      qrSec.style.display = 'block'; adminSec.style.display = 'none';
       loadQR();
     } else {
-      badge.textContent = '🔴 Disconnesso';
-      badge.className = 'badge off';
-      qrSec.style.display = 'none';
-      adminSec.style.display = 'none';
+      badge.textContent = '🔴 Disconnesso'; badge.className = 'badge off';
+      qrSec.style.display = 'none'; adminSec.style.display = 'none';
     }
   } catch {}
 }
-
 async function loadQR() {
-  try {
-    const r = await fetch('/api/qr');
-    const d = await r.json();
-    if (d.qr) document.getElementById('qrImg').src = d.qr;
-  } catch {}
+  try { const r = await fetch('/api/qr'); const d = await r.json(); if (d.qr) document.getElementById('qrImg').src = d.qr; } catch {}
 }
-
-// ─── TABS ─────────────────────────────────────────────────────────────────────
 function showTab(name) {
-  document.querySelectorAll('.tab').forEach((t, i) => {
-    const names = ['compleanni','ricorrenze'];
-    t.classList.toggle('active', names[i] === name);
-  });
+  document.querySelectorAll('.tab').forEach((t, i) => { t.classList.toggle('active', ['compleanni','ricorrenze'][i] === name); });
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
-  if (name === 'compleanni') loadCompleanni();
-  if (name === 'ricorrenze') loadRicorrenze();
+  if (name === 'compleanni') loadCompleanni(); if (name === 'ricorrenze') loadRicorrenze();
 }
-
-// ─── COMPLEANNI ───────────────────────────────────────────────────────────────
-async function loadCompleanni() {
-  const r = await fetch('/api/compleanni');
-  compleanni = await r.json();
-  renderCompleanni(compleanni);
-}
-
+async function loadCompleanni() { const r = await fetch('/api/compleanni'); compleanni = await r.json(); renderCompleanni(compleanni); }
 function renderCompleanni(rows) {
   const tbody = document.getElementById('tbodyCompleanni');
   if (!rows.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">Nessuna persona trovata</td></tr>'; return; }
-  tbody.innerHTML = rows.map((p, i) => \`
-    <tr>
-      <td>\${esc(p.Nome||'')}</td>
-      <td>\${esc(p.Cognome||'')}</td>
-      <td>\${esc(p._dataDisplay||p.Compleanno||'')}</td>
-      <td>\${esc(String(p.Telefono||''))}</td>
-      <td class="attivo-\${(p.Attivo||'SI').toLowerCase()}">\${p.Attivo||'SI'}</td>
-      <td class="actions">
-        <button class="btn btn-blue" onclick="editCompleanni(\${p._idx})">Modifica</button>
-        <button class="btn btn-red" onclick="deleteCompleanni(\${p._idx})">Elimina</button>
-      </td>
-    </tr>
-  \`).join('');
+  tbody.innerHTML = rows.map(p => \`<tr><td>\${esc(p.Nome||'')}</td><td>\${esc(p.Cognome||'')}</td><td>\${esc(p._dataDisplay||p.Compleanno||'')}</td><td>\${esc(String(p.Telefono||''))}</td><td class="attivo-\${(p.Attivo||'SI').toLowerCase()}">\${p.Attivo||'SI'}</td><td class="actions"><button class="btn btn-blue" onclick="editCompleanni(\${p._idx})">Modifica</button><button class="btn btn-red" onclick="deleteCompleanni(\${p._idx})">Elimina</button></td></tr>\`).join('');
 }
-
-function filterCompleanni() {
-  const q = document.getElementById('searchCompleanni').value.toLowerCase();
-  renderCompleanni(compleanni.filter(p =>
-    (p.Nome||'').toLowerCase().includes(q) || (p.Cognome||'').toLowerCase().includes(q)
-  ));
-}
-
+function filterCompleanni() { const q = document.getElementById('searchCompleanni').value.toLowerCase(); renderCompleanni(compleanni.filter(p => (p.Nome||'').toLowerCase().includes(q) || (p.Cognome||'').toLowerCase().includes(q))); }
 function openModal(type, data = null) {
   if (type === 'compleanni') {
     document.getElementById('modalCompTitle').textContent = data ? 'Modifica persona' : 'Aggiungi persona';
@@ -472,106 +425,36 @@ function openModal(type, data = null) {
     document.getElementById('modalRicorrenze').classList.add('open');
   }
 }
-
-function closeModal(type) {
-  document.getElementById(type === 'compleanni' ? 'modalCompleanni' : 'modalRicorrenze').classList.remove('open');
-}
-
-function editCompleanni(idx) {
-  const p = compleanni.find(x => x._idx === idx);
-  if (p) openModal('compleanni', p);
-}
-
-async function deleteCompleanni(idx) {
-  if (!confirm('Eliminare questa persona?')) return;
-  await fetch('/api/compleanni/' + idx, { method: 'DELETE' });
-  loadCompleanni();
-}
-
+function closeModal(type) { document.getElementById(type === 'compleanni' ? 'modalCompleanni' : 'modalRicorrenze').classList.remove('open'); }
+function editCompleanni(idx) { const p = compleanni.find(x => x._idx === idx); if (p) openModal('compleanni', p); }
+async function deleteCompleanni(idx) { if (!confirm('Eliminare questa persona?')) return; await fetch('/api/compleanni/' + idx, { method: 'DELETE' }); loadCompleanni(); }
 async function saveCompleanni() {
   const idx = parseInt(document.getElementById('compIdx').value);
-  const body = {
-    Nome: document.getElementById('compNome').value.trim(),
-    Cognome: document.getElementById('compCognome').value.trim(),
-    Compleanno: document.getElementById('compCompleanno').value.trim(),
-    Telefono: document.getElementById('compTelefono').value.trim() || '.',
-    Attivo: document.getElementById('compAttivo').value,
-    Template_personalizzato: document.getElementById('compTemplate').value.trim(),
-  };
+  const body = { Nome: document.getElementById('compNome').value.trim(), Cognome: document.getElementById('compCognome').value.trim(), Compleanno: document.getElementById('compCompleanno').value.trim(), Telefono: document.getElementById('compTelefono').value.trim() || '.', Attivo: document.getElementById('compAttivo').value, Template_personalizzato: document.getElementById('compTemplate').value.trim() };
   if (!body.Nome || !body.Cognome || !body.Compleanno) { alert('Nome, Cognome e Compleanno sono obbligatori'); return; }
-  if (idx === -1) {
-    await fetch('/api/compleanni', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
-  } else {
-    await fetch('/api/compleanni/' + idx, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
-  }
-  closeModal('compleanni');
-  loadCompleanni();
+  if (idx === -1) { await fetch('/api/compleanni', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) }); }
+  else { await fetch('/api/compleanni/' + idx, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) }); }
+  closeModal('compleanni'); loadCompleanni();
 }
-
-// ─── RICORRENZE ───────────────────────────────────────────────────────────────
-async function loadRicorrenze() {
-  const r = await fetch('/api/ricorrenze');
-  ricorrenze = await r.json();
-  renderRicorrenze(ricorrenze);
-}
-
+async function loadRicorrenze() { const r = await fetch('/api/ricorrenze'); ricorrenze = await r.json(); renderRicorrenze(ricorrenze); }
 function renderRicorrenze(rows) {
   const tbody = document.getElementById('tbodyRicorrenze');
   if (!rows.length) { tbody.innerHTML = '<tr><td colspan="5" class="empty">Nessuna ricorrenza trovata</td></tr>'; return; }
-  tbody.innerHTML = rows.map((r, i) => \`
-    <tr>
-      <td>\${esc(r.Ricorrenza||'')}</td>
-      <td>\${esc(r.Data||'')}</td>
-      <td class="attivo-\${(r.Attivo||'SI').toLowerCase()}">\${r.Attivo||'SI'}</td>
-      <td><div class="msg-preview" title="\${esc(r.Messaggio||'')}">\${esc(r.Messaggio||'')}</div></td>
-      <td class="actions">
-        <button class="btn btn-blue" onclick="editRicorrenza(\${r._idx})">Modifica</button>
-        <button class="btn btn-red" onclick="deleteRicorrenza(\${r._idx})">Elimina</button>
-      </td>
-    </tr>
-  \`).join('');
+  tbody.innerHTML = rows.map(r => \`<tr><td>\${esc(r.Ricorrenza||'')}</td><td>\${esc(r.Data||'')}</td><td class="attivo-\${(r.Attivo||'SI').toLowerCase()}">\${r.Attivo||'SI'}</td><td><div class="msg-preview" title="\${esc(r.Messaggio||'')}">\${esc(r.Messaggio||'')}</div></td><td class="actions"><button class="btn btn-blue" onclick="editRicorrenza(\${r._idx})">Modifica</button><button class="btn btn-red" onclick="deleteRicorrenza(\${r._idx})">Elimina</button></td></tr>\`).join('');
 }
-
-function filterRicorrenze() {
-  const q = document.getElementById('searchRicorrenze').value.toLowerCase();
-  renderRicorrenze(ricorrenze.filter(r => (r.Ricorrenza||'').toLowerCase().includes(q)));
-}
-
-function editRicorrenza(idx) {
-  const r = ricorrenze.find(x => x._idx === idx);
-  if (r) openModal('ricorrenze', r);
-}
-
-async function deleteRicorrenza(idx) {
-  if (!confirm('Eliminare questa ricorrenza?')) return;
-  await fetch('/api/ricorrenze/' + idx, { method: 'DELETE' });
-  loadRicorrenze();
-}
-
+function filterRicorrenze() { const q = document.getElementById('searchRicorrenze').value.toLowerCase(); renderRicorrenze(ricorrenze.filter(r => (r.Ricorrenza||'').toLowerCase().includes(q))); }
+function editRicorrenza(idx) { const r = ricorrenze.find(x => x._idx === idx); if (r) openModal('ricorrenze', r); }
+async function deleteRicorrenza(idx) { if (!confirm('Eliminare questa ricorrenza?')) return; await fetch('/api/ricorrenze/' + idx, { method: 'DELETE' }); loadRicorrenze(); }
 async function saveRicorrenza() {
   const idx = parseInt(document.getElementById('ricIdx').value);
-  const body = {
-    Ricorrenza: document.getElementById('ricNome').value.trim(),
-    Data: document.getElementById('ricData').value.trim(),
-    Attivo: document.getElementById('ricAttivo').value,
-    Messaggio: document.getElementById('ricMessaggio').value.trim(),
-  };
+  const body = { Ricorrenza: document.getElementById('ricNome').value.trim(), Data: document.getElementById('ricData').value.trim(), Attivo: document.getElementById('ricAttivo').value, Messaggio: document.getElementById('ricMessaggio').value.trim() };
   if (!body.Ricorrenza || !body.Data || !body.Messaggio) { alert('Tutti i campi obbligatori devono essere compilati'); return; }
-  if (idx === -1) {
-    await fetch('/api/ricorrenze', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
-  } else {
-    await fetch('/api/ricorrenze/' + idx, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
-  }
-  closeModal('ricorrenze');
-  loadRicorrenze();
+  if (idx === -1) { await fetch('/api/ricorrenze', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) }); }
+  else { await fetch('/api/ricorrenze/' + idx, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) }); }
+  closeModal('ricorrenze'); loadRicorrenze();
 }
-
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-
-// ─── INIT ─────────────────────────────────────────────────────────────────────
-pollStatus();
-setInterval(pollStatus, 5000);
-loadCompleanni();
+pollStatus(); setInterval(pollStatus, 5000); loadCompleanni();
 </script>
 </body>
 </html>`;
@@ -595,37 +478,21 @@ app.get('/api/qr', async (req, res) => {
 
 // Compleanni CRUD
 app.get('/api/compleanni', (req, res) => {
-  const rows = leggiCompleanni(true).map((r, i) => ({
-    ...r,
-    _idx: i,
-    _dataDisplay: serialeToData(r.Compleanno),
-  }));
+  const rows = leggiCompleanni(true).map((r, i) => ({ ...r, _idx: i, _dataDisplay: serialeToData(r.Compleanno) }));
   res.json(rows);
 });
-
 app.post('/api/compleanni', (req, res) => {
-  const rows = leggiCompleanni(true);
-  rows.push(req.body);
-  scriviCompleanni(rows);
-  res.json({ ok: true });
+  const rows = leggiCompleanni(true); rows.push(req.body); scriviCompleanni(rows); res.json({ ok: true });
 });
-
 app.put('/api/compleanni/:idx', (req, res) => {
-  const rows = leggiCompleanni(true);
-  const idx = parseInt(req.params.idx);
+  const rows = leggiCompleanni(true); const idx = parseInt(req.params.idx);
   if (idx < 0 || idx >= rows.length) return res.status(404).json({ error: 'Not found' });
-  rows[idx] = req.body;
-  scriviCompleanni(rows);
-  res.json({ ok: true });
+  rows[idx] = req.body; scriviCompleanni(rows); res.json({ ok: true });
 });
-
 app.delete('/api/compleanni/:idx', (req, res) => {
-  const rows = leggiCompleanni(true);
-  const idx = parseInt(req.params.idx);
+  const rows = leggiCompleanni(true); const idx = parseInt(req.params.idx);
   if (idx < 0 || idx >= rows.length) return res.status(404).json({ error: 'Not found' });
-  rows.splice(idx, 1);
-  scriviCompleanni(rows);
-  res.json({ ok: true });
+  rows.splice(idx, 1); scriviCompleanni(rows); res.json({ ok: true });
 });
 
 // Ricorrenze CRUD
@@ -633,34 +500,23 @@ app.get('/api/ricorrenze', (req, res) => {
   const rows = leggiRicorrenze(true).map((r, i) => ({ ...r, _idx: i }));
   res.json(rows);
 });
-
 app.post('/api/ricorrenze', (req, res) => {
-  const rows = leggiRicorrenze(true);
-  rows.push(req.body);
-  scriviRicorrenze(rows);
-  res.json({ ok: true });
+  const rows = leggiRicorrenze(true); rows.push(req.body); scriviRicorrenze(rows); res.json({ ok: true });
 });
-
 app.put('/api/ricorrenze/:idx', (req, res) => {
-  const rows = leggiRicorrenze(true);
-  const idx = parseInt(req.params.idx);
+  const rows = leggiRicorrenze(true); const idx = parseInt(req.params.idx);
   if (idx < 0 || idx >= rows.length) return res.status(404).json({ error: 'Not found' });
-  rows[idx] = req.body;
-  scriviRicorrenze(rows);
-  res.json({ ok: true });
+  rows[idx] = req.body; scriviRicorrenze(rows); res.json({ ok: true });
 });
-
 app.delete('/api/ricorrenze/:idx', (req, res) => {
-  const rows = leggiRicorrenze(true);
-  const idx = parseInt(req.params.idx);
+  const rows = leggiRicorrenze(true); const idx = parseInt(req.params.idx);
   if (idx < 0 || idx >= rows.length) return res.status(404).json({ error: 'Not found' });
-  rows.splice(idx, 1);
-  scriviRicorrenze(rows);
-  res.json({ ok: true });
+  rows.splice(idx, 1); scriviRicorrenze(rows); res.json({ ok: true });
 });
 
+// ─── START ────────────────────────────────────────────────────────────────────
 app.listen(CONFIG.PORT, () => {
   console.log(`🌐 Admin panel: http://localhost:${CONFIG.PORT}`);
 });
 
-client.initialize();
+connectWhatsApp();
