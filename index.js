@@ -52,6 +52,7 @@ const DEFAULT_TEMPLATE =
 // ─── STATE ────────────────────────────────────────────────────────────────────
 let currentQR = null;
 let botReady = false;
+let historySynced = false;
 let sock = null;
 let schedulerStarted = false;
 
@@ -75,6 +76,19 @@ async function connectWhatsApp() {
   });
 
   sock.ev.on('creds.update', saveCreds);
+
+  // Sincronizzazione storia completata — ora è sicuro inviare
+  sock.ev.on('messaging-history.set', () => {
+    historySynced = true;
+    console.log('📬 Sincronizzazione completata — bot pronto ad inviare');
+  });
+
+  // Log ACK server per ogni messaggio inviato
+  sock.ev.on('messages.update', (updates) => {
+    for (const u of updates) {
+      console.log(`📨 ACK messaggio ${u.key.id}: status=${u.update?.status}`);
+    }
+  });
 
   sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect, qr } = update;
@@ -222,6 +236,13 @@ async function controllaEInvia() {
   if (!botReady || !sock) {
     console.log('⚠️ Bot non connesso, salto controllo');
     return;
+  }
+  if (!historySynced) {
+    console.log('⏳ In attesa sincronizzazione WhatsApp...');
+    await new Promise(resolve => {
+      const check = setInterval(() => { if (historySynced) { clearInterval(check); resolve(); } }, 1000);
+      setTimeout(() => { clearInterval(check); resolve(); }, 30000); // max 30s
+    });
   }
 
   const gruppoJid = await trovaChatGruppo();
