@@ -296,6 +296,82 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 // ─── EXPRESS ADMIN ────────────────────────────────────────────────────────────
 const app = express();
 app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
+
+// ─── AUTH MIDDLEWARE ──────────────────────────────────────────────────────────
+const ADMIN_USER = process.env.ADMIN_USER || 'admin';
+const ADMIN_PASS = process.env.ADMIN_PASS || 'spike2024';
+const sessions = new Set();
+
+function generateToken() {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+const LOGIN_HTML = `<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SPIKE Bot — Login</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,sans-serif;background:#f0f2f5;display:flex;align-items:center;justify-content:center;min-height:100vh}
+  .card{background:#fff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.15);padding:40px;width:min(360px,90vw)}
+  .logo{text-align:center;font-size:2rem;margin-bottom:8px}
+  h1{text-align:center;font-size:1.1rem;color:#075e54;margin-bottom:24px}
+  label{display:block;font-size:.83rem;font-weight:500;color:#555;margin-bottom:5px}
+  input{width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:8px;font-size:.95rem;margin-bottom:16px}
+  button{width:100%;padding:11px;background:#075e54;color:#fff;border:none;border-radius:8px;font-size:1rem;cursor:pointer;font-weight:600}
+  button:hover{background:#054d46}
+  .err{color:#e53e3e;font-size:.85rem;text-align:center;margin-top:12px}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">🤖</div>
+  <h1>SPIKE Bot Admin</h1>
+  <form method="POST" action="/login">
+    <label>Username</label>
+    <input type="text" name="username" required autofocus>
+    <label>Password</label>
+    <input type="password" name="password" required>
+    <button type="submit">Accedi</button>
+  </form>
+  {{ERROR}}
+</div>
+</body>
+</html>`;
+
+function requireAuth(req, res, next) {
+  const token = req.headers.cookie?.match(/spike_token=([^;]+)/)?.[1];
+  if (token && sessions.has(token)) return next();
+  if (req.path === '/login') return next();
+  res.redirect('/login');
+}
+
+app.get('/login', (req, res) => {
+  res.send(LOGIN_HTML.replace('{{ERROR}}', ''));
+});
+
+app.post('/login', (req, res) => {
+  const { username, password } = req.body;
+  if (username === ADMIN_USER && password === ADMIN_PASS) {
+    const token = generateToken();
+    sessions.add(token);
+    res.setHeader('Set-Cookie', `spike_token=${token}; HttpOnly; Path=/; Max-Age=86400`);
+    res.redirect('/');
+  } else {
+    res.send(LOGIN_HTML.replace('{{ERROR}}', '<p class="err">Credenziali non valide</p>'));
+  }
+});
+
+app.post('/logout', (req, res) => {
+  const token = req.headers.cookie?.match(/spike_token=([^;]+)/)?.[1];
+  if (token) sessions.delete(token);
+  res.redirect('/login');
+});
+
+app.use(requireAuth);
 
 const HTML = `<!DOCTYPE html>
 <html lang="it">
@@ -359,6 +435,9 @@ const HTML = `<!DOCTYPE html>
   <div style="font-size:1.6rem">🤖</div>
   <h1>SPIKE Bot Admin</h1>
   <span id="statusBadge" class="badge wait">Connessione...</span>
+  <form method="POST" action="/logout" style="margin-left:auto">
+    <button type="submit" style="background:rgba(255,255,255,.2);border:none;color:#fff;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:.85rem">Esci</button>
+  </form>
 </header>
 <main>
   <div id="qrSection" class="card" style="display:none">
