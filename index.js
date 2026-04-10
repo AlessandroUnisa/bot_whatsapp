@@ -83,14 +83,15 @@ function connectWhatsApp() {
     puppeteer: {
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+      protocolTimeout: 60000,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-gpu',
-        '--disable-software-rasterizer',
-        '--single-process',
-        '--no-zygote',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-extensions',
       ],
     },
   });
