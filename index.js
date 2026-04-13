@@ -83,7 +83,7 @@ function connectWhatsApp() {
     puppeteer: {
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-      protocolTimeout: 60000,
+      protocolTimeout: 120000,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -247,6 +247,16 @@ async function trovaChatGruppo() {
     console.log('Gruppi disponibili:', chats.filter(c => c.isGroup).map(c => c.name));
   } catch (e) {
     console.error('❌ Errore fetch gruppi:', e.message);
+    // Timeout Puppeteer: il browser si è bloccato, forza reconnect
+    if (e.message && e.message.includes('timed out')) {
+      console.log('🔄 Timeout rilevato, forzo reconnect WhatsApp...');
+      botReady = false;
+      try { await client.destroy(); } catch {}
+      setTimeout(() => {
+        pulisciLockFiles();
+        connectWhatsApp();
+      }, 5000);
+    }
   }
   return null;
 }
