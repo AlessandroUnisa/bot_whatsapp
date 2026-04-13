@@ -719,9 +719,47 @@ app.delete('/api/ricorrenze/:idx', (req, res) => {
   rows.splice(idx, 1); scriviRicorrenze(rows); res.json({ ok: true });
 });
 
+// ─── SCHEDULAZIONE CHROMIUM (risparmio risorse) ─────────────────────────────
+// Chromium attivo solo 8:00–19:00 (Roma), fuori orario si spegne
+const CHROME_START_HOUR = 8;
+const CHROME_STOP_HOUR = 19;
+
+function isOrarioAttivo() {
+  const now = new Date().toLocaleString('en-US', { timeZone: 'Europe/Rome' });
+  const hour = new Date(now).getHours();
+  return hour >= CHROME_START_HOUR && hour < CHROME_STOP_HOUR;
+}
+
+async function spegniChromium() {
+  if (!client) return;
+  console.log('🌙 Fuori orario (19:00) — spengo Chromium per risparmiare risorse');
+  botReady = false;
+  schedulerStarted = false;
+  try { await client.destroy(); } catch {}
+  client = null;
+}
+
+// Accendi Chromium alle 8:00
+cron.schedule('0 8 * * *', () => {
+  console.log('☀️ Orario attivo (8:00) — avvio Chromium');
+  pulisciLockFiles();
+  connectWhatsApp();
+}, { timezone: 'Europe/Rome' });
+
+// Spegni Chromium alle 19:00
+cron.schedule('0 19 * * *', () => {
+  spegniChromium();
+}, { timezone: 'Europe/Rome' });
+
 // ─── START ────────────────────────────────────────────────────────────────────
 app.listen(CONFIG.PORT, () => {
   console.log(`🌐 Admin panel: http://localhost:${CONFIG.PORT}`);
 });
 
-connectWhatsApp();
+// Avvia Chromium solo se siamo in orario attivo
+if (isOrarioAttivo()) {
+  console.log(`☀️ In orario attivo (${CHROME_START_HOUR}:00–${CHROME_STOP_HOUR}:00) — avvio Chromium`);
+  connectWhatsApp();
+} else {
+  console.log(`🌙 Fuori orario (${CHROME_START_HOUR}:00–${CHROME_STOP_HOUR}:00) — Chromium spento, admin panel attivo`);
+}
