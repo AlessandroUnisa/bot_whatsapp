@@ -102,10 +102,21 @@ function connectWhatsApp() {
     console.log(`📱 QR disponibile su: http://localhost:${CONFIG.PORT}`);
   });
 
-  client.on('ready', () => {
+  client.on('ready', async () => {
     currentQR = null;
     botReady = true;
     console.log('✅ Bot connesso a WhatsApp!');
+    // Pre-carica l'ID del gruppo subito, quando getChats funziona ancora
+    try {
+      const chats = await client.getChats();
+      const group = chats.find(c => c.isGroup && c.name === CONFIG.GROUP_NAME);
+      if (group) {
+        cachedGroupId = group.id._serialized;
+        console.log(`📌 ID gruppo in cache: ${cachedGroupId}`);
+      }
+    } catch (e) {
+      console.log('⚠️ Pre-cache gruppo fallita, verrà cercato al primo invio');
+    }
     if (!schedulerStarted) {
       avviaScheduler();
       schedulerStarted = true;
@@ -238,11 +249,29 @@ function formatMsg(template, vars = {}) {
   return msg;
 }
 
+let cachedGroupId = null;
+
 async function trovaChatGruppo() {
+  // 1. Se abbiamo l'ID in cache, usiamo getChatById (leggero, no timeout)
+  if (cachedGroupId) {
+    try {
+      const group = await client.getChatById(cachedGroupId);
+      if (group) return group;
+    } catch (e) {
+      console.log('⚠️ Cache gruppo non valida, cerco di nuovo...');
+      cachedGroupId = null;
+    }
+  }
+
+  // 2. Fallback: getChats (pesante) per trovare l'ID la prima volta
   try {
     const chats = await client.getChats();
     const group = chats.find(c => c.isGroup && c.name === CONFIG.GROUP_NAME);
-    if (group) return group;
+    if (group) {
+      cachedGroupId = group.id._serialized;
+      console.log(`📌 ID gruppo salvato in cache: ${cachedGroupId}`);
+      return group;
+    }
     console.error(`❌ Gruppo "${CONFIG.GROUP_NAME}" non trovato.`);
     console.log('Gruppi disponibili:', chats.filter(c => c.isGroup).map(c => c.name));
   } catch (e) {
