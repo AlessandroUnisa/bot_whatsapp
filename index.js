@@ -636,7 +636,7 @@ async function saveRicorrenza() {
   else { await fetch('/api/ricorrenze/' + idx, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) }); }
   closeModal('ricorrenze'); loadRicorrenze();
 }
-function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/\r?\n/g,'&#10;'); }
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/\\r?\\n/g,'&#10;'); }
 pollStatus(); setInterval(pollStatus, 5000); loadCompleanni();
 </script>
 </body>
