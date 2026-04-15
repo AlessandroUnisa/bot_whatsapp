@@ -75,6 +75,7 @@ let currentQR = null;
 let botReady = false;
 let client = null;
 let schedulerStarted = false;
+let initFailCount = 0;
 
 // ─── WHATSAPP CONNECTION (whatsapp-web.js) ───────────────────────────────────
 function connectWhatsApp() {
@@ -105,6 +106,7 @@ function connectWhatsApp() {
   client.on('ready', async () => {
     currentQR = null;
     botReady = true;
+    initFailCount = 0;
     console.log('✅ Bot connesso a WhatsApp!');
     // Pre-carica l'ID del gruppo subito, quando getChats funziona ancora
     try {
@@ -152,11 +154,16 @@ function connectWhatsApp() {
   console.log('🔄 Avvio Chromium e connessione WhatsApp...');
   client.initialize().catch((err) => {
     console.error('❌ Errore inizializzazione:', err.message);
-    // Riprova dopo errore (es. SingletonLock residuo)
+    initFailCount++;
+    // Se EAGAIN o troppi fallimenti, esci e lascia che Railway restarti pulito
+    if (err.message.includes('EAGAIN') || initFailCount >= 3) {
+      console.error(`💥 ${initFailCount} fallimenti consecutivi — exit per restart pulito Railway`);
+      process.exit(1);
+    }
     setTimeout(() => {
       pulisciLockFiles();
       connectWhatsApp();
-    }, 10000);
+    }, 15000);
   });
 }
 
