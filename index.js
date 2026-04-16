@@ -741,7 +741,8 @@ async function spegniChromium() {
   if (!client) return;
   console.log('🌙 Fuori orario (19:00) — spengo Chromium per risparmiare risorse');
   botReady = false;
-  schedulerStarted = false;
+  // NON resettare schedulerStarted: il cron del 9:00 è registrato una volta sola
+  // per evitare duplicati nei giorni successivi
   try { await client.destroy(); } catch {}
   client = null;
 }
