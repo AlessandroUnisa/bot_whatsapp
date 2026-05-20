@@ -418,6 +418,47 @@ app.post('/logout', (req, res) => {
   res.redirect('/login');
 });
 
+// ─── TEST COMPLEANNO SPECIFICO ────────────────────────────────────────────────
+app.post('/api/test-birthday', async (req, res) => {
+  if (!botReady || !client) return res.status(503).json({ error: 'Bot non connesso' });
+  
+  try {
+    const gruppo = await trovaChatGruppo();
+    if (!gruppo) return res.status(404).json({ error: `Gruppo "${CONFIG.GROUP_NAME}" non trovato` });
+    
+    // Cerca Davide Parente nell'Excel
+    const compleanni = leggiCompleanni(true); // legge tutti, anche disattivati
+    const persona = compleanni.find(
+      p => p.Nome && p.Cognome && 
+           p.Nome.trim().toLowerCase() === 'davide' && 
+           p.Cognome.trim().toLowerCase() === 'parente'
+    );
+    
+    if (!persona) {
+      return res.status(404).json({ error: 'Davide Parente non trovato nell\'Excel compleanni' });
+    }
+    
+    // Genera e invia il messaggio come se fosse oggi il compleanno
+    const msg = formatMsg(
+      persona.Template_personalizzato || DEFAULT_TEMPLATE,
+      { Nome: persona.Nome, Cognome: persona.Cognome }
+    );
+    
+    await gruppo.sendMessage(msg);
+    console.log(`TEST: Messaggio di compleanno inviato per ${persona.Nome} ${persona.Cognome}`);
+    
+    res.json({ 
+      ok: true, 
+      messaggio: `Messaggio di compleanno inviato per ${persona.Nome} ${persona.Cognome}!`,
+      template: persona.Template_personalizzato ? 'personalizzato' : 'standard'
+    });
+    
+  } catch (e) {
+    console.error('Errore test birthday:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.use(requireAuth);
 
 const HTML = `<!DOCTYPE html>
@@ -486,7 +527,21 @@ const HTML = `<!DOCTYPE html>
     <button type="submit" style="background:rgba(255,255,255,.2);border:none;color:#fff;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:.85rem">Esci</button>
   </form>
 </header>
+<div style="max-width:1100px;margin:16px auto;padding:0 16px">
+  <button id="btnRunCheck" class="btn btn-green" onclick="runCheckNow()" style="width:100%">
+    Esegui controllo compleanni/ricorrenze ORA
+  </button>
+</div>
 <main>
+<div id="testSection" class="card" style="display:none">
+    <h2>Test messaggi</h2>
+    <p style="color:#666;margin-bottom:16px;font-size:.9rem">
+      Invia messaggi di test anche se non è la data corretta (usa sempre Davide Parente come utente di test).
+    </p>
+    <button id="btnTestBirthday" class="btn btn-green" onclick="testBirthday()" style="width:100%">
+      Testa messaggio compleanno Davide Parente
+    </button>
+  </div>
   <div id="qrSection" class="card" style="display:none">
     <h2>Scansiona il QR con WhatsApp</h2>
     <div class="qr-wrap">
@@ -565,16 +620,24 @@ async function pollStatus() {
     const badge = document.getElementById('statusBadge');
     const qrSec = document.getElementById('qrSection');
     const adminSec = document.getElementById('adminSection');
+    const testSec = document.getElementById('testSection'); // AGGIUNTO
+    
     if (s.connected) {
-      badge.textContent = '✅ Connesso'; badge.className = 'badge on';
-      qrSec.style.display = 'none'; adminSec.style.display = 'block';
+      badge.textContent = 'Connesso'; badge.className = 'badge on';
+      qrSec.style.display = 'none'; 
+      adminSec.style.display = 'block';
+      testSec.style.display = 'block'; // AGGIUNTO - mostra test quando connesso
     } else if (s.qr) {
-      badge.textContent = '⏳ Attesa QR'; badge.className = 'badge wait';
-      qrSec.style.display = 'block'; adminSec.style.display = 'none';
+      badge.textContent = 'Attesa QR'; badge.className = 'badge wait';
+      qrSec.style.display = 'block'; 
+      adminSec.style.display = 'none';
+      testSec.style.display = 'none'; // AGGIUNTO
       loadQR();
     } else {
-      badge.textContent = '🔴 Disconnesso'; badge.className = 'badge off';
-      qrSec.style.display = 'none'; adminSec.style.display = 'none';
+      badge.textContent = 'Disconnesso'; badge.className = 'badge off';
+      qrSec.style.display = 'none'; 
+      adminSec.style.display = 'none';
+      testSec.style.display = 'none'; // AGGIUNTO
     }
   } catch {}
 }
@@ -645,6 +708,32 @@ async function saveRicorrenza() {
 }
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/\\r?\\n/g,'&#10;'); }
 pollStatus(); setInterval(pollStatus, 5000); loadCompleanni();
+async function testBirthday() {
+  const btn = document.getElementById('btnTestBirthday');
+  btn.disabled = true;
+  btn.textContent = '⏳ Invio in corso...';
+  
+  try {
+    const r = await fetch('/api/test-birthday', { method: 'POST' });
+    const d = await r.json();
+    
+    if (d.ok) {
+      btn.textContent = 'Messaggio inviato!';
+      alert(d.messaggio + '\n\nTemplate: ' + d.template);
+    } else {
+      btn.textContent = 'Errore';
+      alert('Errore: ' + (d.error || 'Sconosciuto'));
+    }
+  } catch (e) {
+    btn.textContent = 'Errore di rete';
+    alert('Errore di rete: ' + e.message);
+  }
+  
+  setTimeout(() => {
+    btn.disabled = false;
+    btn.textContent = '🎂 Testa messaggio compleanno Davide Parente';
+  }, 3000);
+}
 </script>
 </body>
 </html>`;
