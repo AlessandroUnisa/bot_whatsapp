@@ -55,13 +55,13 @@ const CONFIG = {
   COMPLEANNI_FILE: './data/compleanni.xlsx',
   RICORRENZE_FILE: './data/ricorrenze.xlsx',
   AUTH_DIR: './data/auth',
-  GROUP_NAME: process.env.GROUP_NAME || 'SPIKE RM 🏛️',
+  GROUP_NAME: process.env.GROUP_NAME || 'Spike Reply Roma 🏛️',
   SEND_TIME: process.env.SEND_TIME || '0 9 * * *',
   PORT: parseInt(process.env.PORT) || 3000,
 };
 
 const DEFAULT_TEMPLATE =
-  '🆕 SPIKE RM 🏛️\n\n' +
+  '🆕 Spike Reply Roma 🏛️\n\n' +
   'Buongiorno a tutti,\n' +
   'tantissimi auguri di buon compleanno, {Nome} {Cognome}! 🎉\n' +
   'Ti auguriamo una giornata piena di sorrisi, brindisi, dolci e possibilmente zero pensieri 😄\n' +
