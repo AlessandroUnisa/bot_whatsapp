@@ -67,7 +67,7 @@ const DEFAULT_TEMPLATE =
   'Ti auguriamo una giornata piena di sorrisi, brindisi, dolci e possibilmente zero pensieri 😄\n' +
   'Che questo nuovo anno ti regali tante belle sorprese, nuove avventure e tanti momenti spensierati da condividere con le persone che ami.\n' +
   'Grazie per l\'energia, la simpatia e la pazienza che metti ogni giorno in tutto quello che fai!\n' +
-  'Goditi il tuo giorno alla grande… e ricordati che, come da regolamento non scritto, chi compie gli anni porta le pastarelle 😜🎂\n\n' +
+  'Goditi il tuo giorno alla grande… e ricordati che, come da regolamento non scritto, chi compie gli anni porta le pastarelle 😜🎂\n' +
   'Un grande augurio da parte di tutti noi! 🥳🎈';
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
